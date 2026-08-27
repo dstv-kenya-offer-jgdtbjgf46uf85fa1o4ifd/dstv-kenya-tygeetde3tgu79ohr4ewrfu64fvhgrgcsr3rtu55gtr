@@ -1,19 +1,27 @@
-require('dotenv').config();
+// server.js — production ready, no dotenv required
 const express = require('express');
 const axios = require('axios');
 
 const app = express();
 app.use(express.json());
 
-// ── Config ──
+// ── Config (reads from platform environment) ──
 const PAYHERO_BASE = 'https://backend.payhero.co.ke/api/v2';
-const PAYHERO_TOKEN = process.env.PAYHERO_AUTH_TOKEN; // Basic YOUR_TOKEN
-const PAYHERO_CHANNEL = process.env.PAYHERO_CHANNEL_ID;
+const PAYHERO_TOKEN = process.env.PAYHERO_AUTH_TOKEN || '';
+const PAYHERO_CHANNEL = process.env.PAYHERO_CHANNEL_ID || '';
+const PORT = process.env.PORT || 3000;
 
-if (!PAYHERO_TOKEN || !PAYHERO_CHANNEL) {
-  console.error('Missing PAYHERO_AUTH_TOKEN or PAYHERO_CHANNEL_ID in environment');
-  process.exit(1);
-}
+// ── Health check ──
+app.get('/health', (req, res) => {
+  const ready = !!(PAYHERO_TOKEN && PAYHERO_CHANNEL);
+  res.status(ready ? 200 : 503).json({
+    status: ready ? 'ok' : 'not_configured',
+    missing: ready ? [] : [
+      ...(!PAYHERO_TOKEN ? ['PAYHERO_AUTH_TOKEN'] : []),
+      ...(!PAYHERO_CHANNEL ? ['PAYHERO_CHANNEL_ID'] : [])
+    ]
+  });
+});
 
 // ── Phone normalizer ──
 function normalizePhone(phone) {
@@ -23,8 +31,15 @@ function normalizePhone(phone) {
   return num;
 }
 
-// ── Endpoint called by the frontend ──
+// ── STK Push proxy ──
 app.post('/api/payhero/stk-push', async (req, res) => {
+  if (!PAYHERO_TOKEN || !PAYHERO_CHANNEL) {
+    return res.status(500).json({
+      success: false,
+      message: 'Server misconfiguration: PayHero credentials not set.'
+    });
+  }
+
   try {
     const { phone_number, amount, customer_name, external_reference } = req.body;
 
@@ -44,7 +59,7 @@ app.post('/api/payhero/stk-push', async (req, res) => {
       provider: 'm-pesa',
       customer_name: customer_name || 'Customer',
       external_reference: external_reference || 'REF-' + Date.now(),
-      callback_url: process.env.PAYHERO_CALLBACK_URL || '' // optional
+      callback_url: process.env.PAYHERO_CALLBACK_URL || ''
     };
 
     const response = await axios.post(
@@ -59,7 +74,6 @@ app.post('/api/payhero/stk-push', async (req, res) => {
       }
     );
 
-    // Forward PayHero's response to the browser
     return res.status(200).json(response.data);
   } catch (error) {
     console.error('PayHero STK Push Error:', error.response?.data || error.message);
@@ -70,12 +84,14 @@ app.post('/api/payhero/stk-push', async (req, res) => {
   }
 });
 
-// Optional: receive PayHero callbacks
+// ── Optional: receive PayHero callbacks ──
 app.post('/webhook/payhero', (req, res) => {
   console.log('PayHero callback:', req.body);
-  // TODO: update your database / order status here
   res.status(200).json({ success: true, message: 'Received' });
 });
 
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+app.listen(PORT, () => {
+  console.log(`Server running on port ${PORT}`);
+  if (!PAYHERO_TOKEN) console.warn('WARN: PAYHERO_AUTH_TOKEN is not set');
+  if (!PAYHERO_CHANNEL) console.warn('WARN: PAYHERO_CHANNEL_ID is not set');
+});
