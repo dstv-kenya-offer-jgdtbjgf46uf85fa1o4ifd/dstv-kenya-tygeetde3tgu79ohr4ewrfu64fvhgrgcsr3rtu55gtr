@@ -8,23 +8,24 @@ app.use(express.json());
 app.use(cors());
 
 // ============================================
-// SERVE STATIC FRONTEND
+// SERVE YOUR FRONTEND FROM /public FOLDER
 // ============================================
 app.use(express.static(path.join(__dirname, 'public')));
 
+// If someone visits the root, send them the payment page
 app.get('/', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
 // ============================================
-// CONFIGURATION
+// PAYHERO CONFIG
 // ============================================
 const PAYHERO_USERNAME = process.env.PAYHERO_USERNAME;
 const PAYHERO_PASSWORD = process.env.PAYHERO_PASSWORD;
 const PAYHERO_CHANNEL_ID = parseInt(process.env.PAYHERO_CHANNEL_ID, 10);
 
 if (!PAYHERO_USERNAME || !PAYHERO_PASSWORD || !PAYHERO_CHANNEL_ID) {
-    console.error('ERROR: Missing PayHero environment variables.');
+    console.error('Missing PayHero env vars');
     process.exit(1);
 }
 
@@ -51,15 +52,14 @@ function normalizePhoneNumber(raw) {
     }
 
     if (!/^254[17]\d{8}$/.test(num)) {
-        throw new Error('Invalid Safaricom phone number.');
+        throw new Error('Invalid Safaricom number.');
     }
     return num;
 }
 
 // ============================================
-// API ROUTES
+// API ROUTE — your frontend calls this
 // ============================================
-
 app.post('/api/payhero/stk-push', async (req, res) => {
     try {
         const { msisdn, amount = 100, reference = 'PAYMENT', customer_name = 'Customer' } = req.body;
@@ -69,7 +69,6 @@ app.post('/api/payhero/stk-push', async (req, res) => {
         }
 
         const normalizedPhone = normalizePhoneNumber(msisdn);
-        console.log(`[STK Push] ${normalizedPhone} | Amount: ${amount}`);
 
         const payload = {
             amount: parseInt(amount, 10),
@@ -94,9 +93,8 @@ app.post('/api/payhero/stk-push', async (req, res) => {
         );
 
         const result = payheroResponse.data;
-        console.log(`[STK Push] PayHero response:`, result);
 
-        return res.status(200).json({
+        return res.json({
             success: true,
             message: 'STK Push initiated successfully',
             data: {
@@ -107,7 +105,7 @@ app.post('/api/payhero/stk-push', async (req, res) => {
         });
 
     } catch (error) {
-        console.error('[STK Push Error]', error.response?.data || error.message);
+        console.error('STK Push Error:', error.response?.data || error.message);
         return res.status(500).json({
             success: false,
             message: error.response?.data?.message || error.message || 'Failed to initiate payment'
@@ -115,16 +113,16 @@ app.post('/api/payhero/stk-push', async (req, res) => {
     }
 });
 
+// PayHero sends results here
 app.post('/api/payhero/callback', (req, res) => {
-    console.log('[PayHero Callback] Received:', JSON.stringify(req.body, null, 2));
-    res.status(200).json({ success: true, message: 'Callback received' });
+    console.log('Callback:', req.body);
+    res.json({ success: true });
 });
 
 // ============================================
-// START SERVER
+// START
 // ============================================
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);
-    console.log(`Payment page: http://localhost:${PORT}/`);
 });
