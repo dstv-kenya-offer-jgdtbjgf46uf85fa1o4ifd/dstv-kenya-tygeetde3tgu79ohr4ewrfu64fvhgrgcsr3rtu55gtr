@@ -2,61 +2,39 @@ const express = require('express');
 const cors = require('cors');
 const axios = require('axios');
 const path = require('path');
-const fs = require('fs');
 
 const app = express();
 app.use(express.json());
 app.use(cors());
 
 // ============================================
-// SERVE STATIC FILES (if public/ exists)
+// SERVE FRONTEND
 // ============================================
 const publicPath = path.join(__dirname, 'public');
-const hasPublicFolder = fs.existsSync(publicPath);
-
-if (hasPublicFolder) {
-    app.use(express.static(publicPath));
-    console.log('Serving static files from /public');
-} else {
-    console.log('WARNING: /public folder not found. Creating it is recommended.');
-}
+app.use(express.static(publicPath));
 
 app.get('/', (req, res) => {
-    const indexPath = path.join(__dirname, 'public', 'index.html');
-    if (fs.existsSync(indexPath)) {
-        res.sendFile(indexPath);
-    } else {
-        res.send(`
-            <h1>Backend is running</h1>
-            <p>Put your index.html inside a /public folder and redeploy.</p>
-            <p>API endpoint: POST /api/payhero/stk-push</p>
-        `);
-    }
+    res.sendFile(path.join(publicPath, 'index.html'));
 });
 
 // ============================================
 // PAYHERO CONFIG
 // ============================================
-const PAYHERO_USERNAME = process.env.PAYHERO_USERNAME || '';
-const PAYHERO_PASSWORD = process.env.PAYHERO_PASSWORD || '';
-const PAYHERO_CHANNEL_ID = parseInt(process.env.PAYHERO_CHANNEL_ID || '0', 10);
+const PAYHERO_USERNAME = process.env.PAYHERO_USERNAME;
+const PAYHERO_PASSWORD = process.env.PAYHERO_PASSWORD;
+const PAYHERO_CHANNEL_ID = parseInt(process.env.PAYHERO_CHANNEL_ID, 10) || 0;
 
-console.log('Config check:', {
-    has_username: !!PAYHERO_USERNAME,
-    has_password: !!PAYHERO_PASSWORD,
-    channel_id: PAYHERO_CHANNEL_ID
-});
+if (!PAYHERO_USERNAME || !PAYHERO_PASSWORD || !PAYHERO_CHANNEL_ID) {
+    console.error('Missing env vars: PAYHERO_USERNAME, PAYHERO_PASSWORD, PAYHERO_CHANNEL_ID');
+}
 
 const PAYHERO_BASE_URL = 'https://backend.payhero.co.ke/api/v2';
-const PAYHERO_BASIC_AUTH = (PAYHERO_USERNAME && PAYHERO_PASSWORD)
-    ? 'Basic ' + Buffer.from(`${PAYHERO_USERNAME}:${PAYHERO_PASSWORD}`).toString('base64')
-    : null;
+const PAYHERO_BASIC_AUTH = 'Basic ' + Buffer.from(`${PAYHERO_USERNAME}:${PAYHERO_PASSWORD}`).toString('base64');
 
 // ============================================
 // PHONE NORMALIZATION
 // ============================================
 function normalizePhoneNumber(raw) {
-    if (!raw) throw new Error('Phone number is empty');
     let num = String(raw).replace(/\s+/g, '').replace(/-/g, '');
     if (num.startsWith('+')) num = num.substring(1);
 
@@ -65,7 +43,7 @@ function normalizePhoneNumber(raw) {
     else if (num.startsWith('01') && num.length === 10) num = '254' + num.substring(1);
     else if (num.startsWith('1') && num.length === 9) num = '254' + num;
     else if (!(num.startsWith('254') && num.length === 12)) {
-        throw new Error('Invalid format. Use 07XX, 01XX, 7XX, 1XX, or 254XXX.');
+        throw new Error('Invalid phone number format.');
     }
 
     if (!/^254[17]\d{8}$/.test(num)) {
@@ -75,7 +53,7 @@ function normalizePhoneNumber(raw) {
 }
 
 // ============================================
-// STK PUSH API
+// API ROUTES
 // ============================================
 app.post('/api/payhero/stk-push', async (req, res) => {
     try {
@@ -83,10 +61,6 @@ app.post('/api/payhero/stk-push', async (req, res) => {
 
         if (!msisdn) {
             return res.status(400).json({ success: false, message: 'MSISDN is required' });
-        }
-
-        if (!PAYHERO_BASIC_AUTH) {
-            return res.status(500).json({ success: false, message: 'Server not configured: missing PayHero credentials' });
         }
 
         const normalizedPhone = normalizePhoneNumber(msisdn);
@@ -128,14 +102,13 @@ app.post('/api/payhero/stk-push', async (req, res) => {
     }
 });
 
-// Callback from PayHero
 app.post('/api/payhero/callback', (req, res) => {
-    console.log('Callback received:', req.body);
+    console.log('Callback:', req.body);
     res.json({ received: true });
 });
 
 // ============================================
-// START SERVER
+// START
 // ============================================
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
