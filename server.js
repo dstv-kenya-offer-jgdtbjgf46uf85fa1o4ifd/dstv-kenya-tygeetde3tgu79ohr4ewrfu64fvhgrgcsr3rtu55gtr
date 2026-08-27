@@ -1,13 +1,24 @@
 const express = require('express');
 const cors = require('cors');
-const axios = require('axios');
+const axios = require('express');
+const path = require('path');  // ← ADD THIS
 
 const app = express();
 app.use(express.json());
-app.use(cors()); // Allows your frontend to call this backend
+app.use(cors());
 
 // ============================================
-// CONFIGURATION (Set these in Render Dashboard)
+// SERVE STATIC FRONTEND FILES  ← ADD THIS BLOCK
+// ============================================
+app.use(express.static(path.join(__dirname, 'public')));
+
+// Root route: serve your payment page
+app.get('/', (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+
+// ============================================
+// CONFIGURATION
 // ============================================
 const PAYHERO_USERNAME = process.env.PAYHERO_USERNAME;
 const PAYHERO_PASSWORD = process.env.PAYHERO_PASSWORD;
