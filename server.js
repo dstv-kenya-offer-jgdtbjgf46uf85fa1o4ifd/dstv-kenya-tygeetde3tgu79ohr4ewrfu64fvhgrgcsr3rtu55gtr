@@ -1,114 +1,144 @@
-const express = require('express');
-const cors = require('cors');
 require('dotenv').config();
+const express = require('express');
+const axios = require('axios');
+const cors = require('cors');
+const helmet = require('helmet');
+const path = require('path');
 
 const app = express();
 
-// Enable CORS for frontend requests
+// Security middleware
+app.use(helmet());
 app.use(cors());
 app.use(express.json());
 
-// Dynamic payment amount from environment, fallback to 1000
-const PAYMENT_AMOUNT = Number(process.env.PAYMENT_AMOUNT) || 1000;
+// Serve static files (page2.html and assets)
+app.use(express.static(path.join(__dirname, 'public')));
 
-// Helper function to validate and format Kenyan phone numbers into 254XXXXXXXXX
-function formatKenyanNumber(phone) {
-  if (!phone) return null;
-  let cleaned = phone.toString().replace(/\D/g, ''); // Remove non-digit characters
-
-  if (cleaned.startsWith('0') && cleaned.length === 10) {
-    cleaned = '254' + cleaned.substring(1);
-  } else if (cleaned.startsWith('7') || cleaned.startsWith('1')) {
-    if (cleaned.length === 9) {
-      cleaned = '254' + cleaned;
+/**
+ * Normalize Kenyan phone numbers to 254XXXXXXXXX format
+ */
+function normalizePhoneNumber(raw) {
+    if (!raw) return null;
+    
+    // Remove all non-digits
+    let digits = raw.replace(/\D/g, '');
+    
+    // Handle common Kenyan formats
+    if (digits.startsWith('254') && digits.length === 12) {
+        return digits;
     }
-  } else if (cleaned.startsWith('254') && cleaned.length === 12) {
-    // Already valid format
-  } else {
-    return null; // Invalid format
-  }
-
-  return cleaned;
+    if (digits.startsWith('0') && digits.length === 10) {
+        return '254' + digits.substring(1);
+    }
+    if (digits.startsWith('7') || digits.startsWith('1')) {
+        // Missing country code, assume Kenya
+        return '254' + digits;
+    }
+    if (digits.length === 9 && (digits.startsWith('7') || digits.startsWith('1'))) {
+        return '254' + digits;
+    }
+    
+    return null;
 }
 
-// 1. Root route handler (Fixes "Cannot GET /")
-app.get('/', (req, res) => {
-  res.status(200).json({
-    status: 'online',
-    message: 'DSTV Kenya Payment Backend Service is active.',
-    current_amount: PAYMENT_AMOUNT
-  });
-});
+/**
+ * POST /api/stk-push
+ * Receives MSISDN from frontend, validates it, calls PayHero API
+ */
+app.post('/api/stk-push', async (req, res) => {
+    try {
+        const { msisdn, smartcard, page_url } = req.body;
 
-// 2. STK Push Route
-app.post('/api/stkpush', async (req, res) => {
-  const { phone_number } = req.body;
+        // 1. Validate input
+        if (!msisdn) {
+            return res.status(400).json({
+                success: false,
+                message: 'Mobile number is required'
+            });
+        }
 
-  if (!phone_number) {
-    return res.status(400).json({ 
-      success: false, 
-      message: 'Phone number is required.' 
-    });
-  }
+        // 2. Normalize phone number
+        const normalizedPhone = normalizePhoneNumber(msisdn);
+        if (!normalizedPhone) {
+            return res.status(400).json({
+                success: false,
+                message: 'Invalid mobile number format. Please use 07XX, 01XX, or 254XXX format.'
+            });
+        }
 
-  const normalizedPhone = formatKenyanNumber(phone_number);
+        // 3. Prepare PayHero API call
+        const payheroUrl = 'https://backend.payhero.co.ke/api/v2/payments';
+        
+        // Basic Auth: Base64(username:password)
+        const authString = Buffer.from(
+            `${process.env.PAYHERO_USERNAME}:${process.env.PAYHERO_PASSWORD}`
+        ).toString('base64');
 
-  if (!normalizedPhone) {
-    return res.status(400).json({ 
-      success: false, 
-      message: 'Invalid phone number format. Please enter a valid Safaricom/Airtel number.' 
-    });
-  }
+        const payload = {
+            amount: 1, // Set your actual amount here or derive from smartcard/package
+            phone_number: normalizedPhone,
+            channel_id: parseInt(process.env.PAYHERO_CHANNEL_ID, 10),
+            provider: 'm-pesa',
+            external_reference: smartcard || `DSTV-${Date.now()}`,
+            customer_name: 'DStv Customer',
+            callback_url: `${req.protocol}://${req.get('host')}/api/callback`
+        };
 
-  try {
-    const payHeroResponse = await fetch('https://backend.payhero.co.ke/api/v2/payments', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': process.env.PAYHERO_API_KEY
-      },
-      body: JSON.stringify({
-        amount: PAYMENT_AMOUNT,
-        phone_number: normalizedPhone,
-        channel_id: Number(process.env.PAYHERO_CHANNEL_ID),
-        provider: 'm-pesa',
-        external_reference: `DSTV_${Date.now()}`,
-        callback_url: process.env.PAYHERO_CALLBACK_URL || 'https://your-render-service.onrender.com/api/callback'
-      })
-    });
+        // 4. Call PayHero STK Push API (credentials never touch the browser)
+        const response = await axios.post(payheroUrl, payload, {
+            headers: {
+                'Authorization': `Basic ${authString}`,
+                'Content-Type': 'application/json'
+            },
+            timeout: 30000
+        });
 
-    const result = await payHeroResponse.json();
+        // 5. Return result to frontend
+        if (response.data && response.data.success) {
+            return res.json({
+                success: true,
+                message: 'M-Pesa prompt sent. Check your phone to enter PIN.',
+                data: response.data.data
+            });
+        } else {
+            return res.status(400).json({
+                success: false,
+                message: response.data?.message || 'Payment initiation failed'
+            });
+        }
 
-    if (payHeroResponse.ok && (result.status === 'Success' || result.success)) {
-      return res.status(200).json({
-        success: true,
-        message: 'STK Push initiated successfully.',
-        data: result
-      });
-    } else {
-      return res.status(400).json({
-        success: false,
-        message: result.message || 'Failed to trigger STK Push from PayHero.'
-      });
+    } catch (error) {
+        console.error('PayHero API Error:', error.response?.data || error.message);
+        return res.status(500).json({
+            success: false,
+            message: error.response?.data?.message || 'Server error while processing payment'
+        });
     }
-  } catch (error) {
-    console.error('PayHero API Error:', error);
-    return res.status(500).json({
-      success: false,
-      message: 'Internal server error while processing payment.'
-    });
-  }
 });
 
-// 3. Catch-all for undefined routes
-app.use((req, res) => {
-  res.status(404).json({
-    success: false,
-    message: 'Route not found. Make sure your request method and endpoint path are correct.'
-  });
+/**
+ * POST /api/callback
+ * PayHero sends payment status updates here
+ */
+app.post('/api/callback', (req, res) => {
+    console.log('PayHero Callback:', JSON.stringify(req.body, null, 2));
+    
+    // Always acknowledge receipt
+    res.json({ success: true, message: 'Callback received' });
+    
+    // TODO: Update your database, activate subscription, send email, etc.
+    // Example:
+    // const { status, external_reference, mpesa_receipt_number } = req.body;
+    // if (status === 'completed') { ... }
+});
+
+// Health check
+app.get('/api/health', (req, res) => {
+    res.json({ status: 'OK', timestamp: new Date().toISOString() });
 });
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`Backend service running on port ${PORT} with active price KES ${PAYMENT_AMOUNT}`);
+    console.log(`Server running on port ${PORT}`);
 });
