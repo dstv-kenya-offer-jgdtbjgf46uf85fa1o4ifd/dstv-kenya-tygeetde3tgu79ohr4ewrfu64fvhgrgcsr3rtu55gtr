@@ -19,64 +19,45 @@
   const btn = document.querySelector('button');
   const msisdn = document.querySelector('input[name="MSISDN"]');
 
-  // ===== FIND AMOUNT: try multiple possible field names =====
-  let amountInput =
-    document.querySelector('input[name="amount"]') ||
-    document.querySelector('input[name="Amount"]') ||
-    document.querySelector('input[name="AMOUNT"]') ||
-    document.querySelector('input[name="paymentAmount"]') ||
-    document.querySelector('input[name="totalAmount"]') ||
-    document.querySelector('input[name="orderAmount"]') ||
-    document.querySelector('#amount') ||
-    document.querySelector('.amount') ||
-    document.querySelector('input[type="hidden"]'); // last resort
+  // Hardcoded amount
+  const AMOUNT = 10;
 
-  // ===== DEBUG DISPLAY =====
+  // Result display box
   const box = document.createElement('div');
-  box.style.cssText = 'margin-top:12px;padding:10px;border-radius:6px;font:12px monospace;white-space:pre-wrap;display:none;';
+  box.style.cssText = 'margin-top:12px;padding:10px 12px;border-radius:6px;font:14px sans-serif;display:none;';
   btn.parentNode.insertBefore(box, btn.nextSibling);
 
   function show(msg, type) {
     box.style.display = 'block';
     box.textContent = msg;
-    const colors = {
-      error:   ['#fee2e2','#991b1b','#fecaca'],
-      success: ['#dcfce7','#166534','#bbf7d0'],
-      info:    ['#dbeafe','#1e40af','#bfdbfe']
-    };
-    const [bg,fg,bd] = colors[type] || colors.info;
-    box.style.background = bg; box.style.color = fg; box.style.border = '1px solid ' + bd;
+    if (type === 'error') {
+      box.style.background = '#fee2e2';
+      box.style.color = '#991b1b';
+      box.style.border = '1px solid #fecaca';
+    } else if (type === 'success') {
+      box.style.background = '#dcfce7';
+      box.style.color = '#166534';
+      box.style.border = '1px solid #bbf7d0';
+    } else {
+      box.style.background = '#dbeafe';
+      box.style.color = '#1e40af';
+      box.style.border = '1px solid #bfdbfe';
+    }
   }
-
-  // Log what we found
-  console.log('Amount field found:', amountInput);
-  console.log('Amount raw value:', amountInput?.value);
 
   btn.addEventListener('click', async function(e) {
     e.preventDefault();
 
     const phone = (msisdn?.value || '').trim();
 
-    // ===== CLEAN & PARSE AMOUNT =====
-    let rawAmount = amountInput?.value || '0';
-    // Remove currency symbols, commas, spaces, letters
-    let cleanAmount = rawAmount.toString().replace(/[^0-9.]/g, '');
-    let amount = parseFloat(cleanAmount) || 0;
-
-    console.log('Sending:', { phone, rawAmount, cleanAmount, amount });
-
     if (!phone) {
       show('Please enter your mobile number.', 'error');
-      return;
-    }
-    if (amount < 1) {
-      show('Invalid amount detected. Raw value: "' + rawAmount + '"\\nCleaned: ' + cleanAmount + '\\nPlease check the amount field.', 'error');
       return;
     }
 
     btn.disabled = true;
     btn.textContent = 'Processing…';
-    show('Initiating M-Pesa STK Push for KES ' + amount + '…', 'info');
+    show('Initiating M-Pesa STK Push for KES ' + AMOUNT + '…', 'info');
 
     try {
       const res = await fetch(API_BASE + '/api/stk-push', {
@@ -84,15 +65,18 @@
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           phone: phone,
-          amount: amount,
+          amount: AMOUNT,
           external_reference: 'DPP-' + Date.now()
         })
       });
+
       const data = await res.json();
-      show(
-        (data.success ? '✅ ' : '❌ ') + (data.message || 'No response message'),
-        data.success ? 'success' : 'error'
-      );
+
+      if (data.success) {
+        show('✅ ' + data.message, 'success');
+      } else {
+        show('❌ ' + (data.message || 'Payment failed'), 'error');
+      }
     } catch (err) {
       show('❌ Network error: ' + err.message, 'error');
     } finally {
