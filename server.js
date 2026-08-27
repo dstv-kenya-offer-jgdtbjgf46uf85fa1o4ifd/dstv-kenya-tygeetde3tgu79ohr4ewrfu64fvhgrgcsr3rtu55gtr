@@ -1,58 +1,65 @@
 const express = require('express');
+const cors = require('cors');
 const axios = require('axios');
-const router = express.Router();
 
-// PayHero Configuration
+const app = express();
+app.use(express.json());
+app.use(cors()); // Allows your frontend to call this backend
+
+// ============================================
+// CONFIGURATION (Set these in Render Dashboard)
+// ============================================
+const PAYHERO_USERNAME = process.env.PAYHERO_USERNAME;
+const PAYHERO_PASSWORD = process.env.PAYHERO_PASSWORD;
+const PAYHERO_CHANNEL_ID = parseInt(process.env.PAYHERO_CHANNEL_ID, 10);
+const CALLBACK_BASE_URL = process.env.CALLBACK_BASE_URL; // Your Render service URL
+
+if (!PAYHERO_USERNAME || !PAYHERO_PASSWORD || !PAYHERO_CHANNEL_ID) {
+    console.error('ERROR: Missing PayHero environment variables. Check Render dashboard.');
+    process.exit(1);
+}
+
 const PAYHERO_BASE_URL = 'https://backend.payhero.co.ke/api/v2';
-const PAYHERO_BASIC_AUTH = 'Basic ' + Buffer.from('YOUR_USERNAME:YOUR_PASSWORD').toString('base64');
-const PAYHERO_CHANNEL_ID = 133; // Your PayHero channel ID
+const PAYHERO_BASIC_AUTH = 'Basic ' + Buffer.from(`${PAYHERO_USERNAME}:${PAYHERO_PASSWORD}`).toString('base64');
 
-/**
- * Normalize Kenyan phone numbers to 254XXXXXXXXX format
- */
+// ============================================
+// PHONE NORMALIZATION
+// ============================================
 function normalizePhoneNumber(raw) {
     let num = raw.replace(/\s+/g, '').replace(/-/g, '');
-
-    // Remove leading +
     if (num.startsWith('+')) num = num.substring(1);
 
-    // 07XXXXXXXX -> 2547XXXXXXXX
     if (num.startsWith('07') && num.length === 10) {
         num = '254' + num.substring(1);
-    }
-    // 7XXXXXXXX -> 2547XXXXXXXX
-    else if (num.startsWith('7') && num.length === 9) {
+    } else if (num.startsWith('7') && num.length === 9) {
         num = '254' + num;
-    }
-    // 01XXXXXXXX -> 2541XXXXXXXX
-    else if (num.startsWith('01') && num.length === 10) {
+    } else if (num.startsWith('01') && num.length === 10) {
         num = '254' + num.substring(1);
-    }
-    // 1XXXXXXXX -> 2541XXXXXXXX
-    else if (num.startsWith('1') && num.length === 9) {
+    } else if (num.startsWith('1') && num.length === 9) {
         num = '254' + num;
-    }
-    // 2547XXXXXXXX or 2541XXXXXXXX (already correct)
-    else if (num.startsWith('254') && num.length === 12) {
-        // valid
-    }
-    else {
+    } else if (num.startsWith('254') && num.length === 12) {
+        // already correct
+    } else {
         throw new Error('Invalid phone number format. Use 07XX, 01XX, 7XX, 1XX, or 254XXX.');
     }
 
-    // Validate: must be 12 digits starting with 254
     if (!/^254[17]\d{8}$/.test(num)) {
         throw new Error('Invalid Safaricom phone number.');
     }
-
     return num;
 }
 
-/**
- * POST /api/payhero/stk-push
- * Frontend calls this endpoint when user clicks Continue
- */
-router.post('/payhero/stk-push', async (req, res) => {
+// ============================================
+// ROUTES
+// ============================================
+
+// Health check
+app.get('/', (req, res) => {
+    res.json({ status: 'PayHero STK Backend is running', timestamp: new Date().toISOString() });
+});
+
+// Main STK Push endpoint — your frontend calls this
+app.post('/api/payhero/stk-push', async (req, res) => {
     try {
         const { msisdn, amount = 100, reference = 'PAYMENT', customer_name = 'Customer' } = req.body;
 
@@ -60,20 +67,19 @@ router.post('/payhero/stk-push', async (req, res) => {
             return res.status(400).json({ success: false, message: 'MSISDN is required' });
         }
 
-        // 1. VALIDATE & NORMALIZE
+        // 1. Validate & Normalize
         const normalizedPhone = normalizePhoneNumber(msisdn);
-        console.log('Normalized phone:', normalizedPhone);
+        console.log(`[STK Push] Normalized: ${normalizedPhone} | Amount: ${amount}`);
 
-        // 2. CALL PAYHERO STK PUSH API
-        // Endpoint: POST https://backend.payhero.co.ke/api/v2/payments
+        // 2. Call PayHero API
         const payload = {
             amount: parseInt(amount, 10),
-            phone_number: normalizedPhone,  // PayHero accepts 2547XXXXXXXX
+            phone_number: normalizedPhone,
             channel_id: PAYHERO_CHANNEL_ID,
             provider: 'm-pesa',
             external_reference: reference,
             customer_name: customer_name,
-            callback_url: 'https://your-backend.com/api/payhero/callback' // Your webhook
+            callback_url: `${CALLBACK_BASE_URL}/api/payhero/callback`
         };
 
         const payheroResponse = await axios.post(
@@ -84,28 +90,26 @@ router.post('/payhero/stk-push', async (req, res) => {
                     'Content-Type': 'application/json',
                     'Authorization': PAYHERO_BASIC_AUTH
                 },
-                timeout: 15000 // 15 seconds
+                timeout: 15000
             }
         );
 
         const result = payheroResponse.data;
-        console.log('PayHero response:', result);
+        console.log(`[STK Push] PayHero response:`, result);
 
-        // 3. RETURN SUCCESS TO FRONTEND
-        // The frontend will then display "prompt sent"
+        // 3. Return success to frontend → triggers "prompt sent"
         return res.status(200).json({
             success: true,
             message: 'STK Push initiated successfully',
             data: {
                 reference: result.reference,
                 checkout_request_id: result.CheckoutRequestID,
-                status: result.status // Usually "QUEUED"
+                status: result.status
             }
         });
 
     } catch (error) {
-        console.error('STK Push Error:', error.response?.data || error.message);
-
+        console.error('[STK Push Error]', error.response?.data || error.message);
         return res.status(500).json({
             success: false,
             message: error.response?.data?.message || error.message || 'Failed to initiate payment'
@@ -113,17 +117,21 @@ router.post('/payhero/stk-push', async (req, res) => {
     }
 });
 
-/**
- * POST /api/payhero/callback
- * PayHero sends payment results here
- */
-router.post('/payhero/callback', express.json(), (req, res) => {
-    console.log('PayHero callback received:', req.body);
-
+// PayHero sends payment results here
+app.post('/api/payhero/callback', (req, res) => {
+    console.log('[PayHero Callback] Received:', JSON.stringify(req.body, null, 2));
+    
     // TODO: Update your database with payment status
-    // result.status can be: QUEUED | SUCCESS | FAILED
-
+    // Possible statuses: QUEUED | SUCCESS | FAILED
+    
     res.status(200).json({ success: true, message: 'Callback received' });
 });
 
-module.exports = router;
+// ============================================
+// START SERVER
+// ============================================
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+    console.log(`Server running on port ${PORT}`);
+    console.log(`Health check: http://localhost:${PORT}/`);
+});
