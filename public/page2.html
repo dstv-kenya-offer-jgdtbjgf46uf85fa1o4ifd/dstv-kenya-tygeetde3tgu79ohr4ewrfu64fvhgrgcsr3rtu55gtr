@@ -28,36 +28,48 @@
 
     function initPayHeroStk() {
         const form = document.getElementById('vendorFieldsForm');
-        const btn = document.querySelector('.button-contatiner button, #vendorFieldsForm button, button[type="submit"]');
         const msisdnInput = document.querySelector('input[name="MSISDN"]');
         const smartcardInput = document.querySelector('input[name="SMARTCARD NUMBER"]');
-
-        if (!btn || !msisdnInput) {
-            console.error('PayHero STK: Button or MSISDN input not found');
+        
+        // Find the Continue button aggressively
+        let btn = document.querySelector('.button-contatiner button');
+        if (!btn && form) btn = form.querySelector('button[type="submit"], button');
+        if (!btn) btn = document.querySelector('button');
+        
+        if (!form || !btn || !msisdnInput) {
+            console.error('PayHero init failed. Missing:', {
+                form: !!form, 
+                button: !!btn, 
+                msisdnInput: !!msisdnInput
+            });
             return;
         }
 
-        // CRITICAL: Stop the form from ever submitting to payment.do
-        if (form) {
-            form.action = '#';
-            form.addEventListener('submit', function(e) {
-                e.preventDefault();
-                e.stopPropagation();
-            }, true);
-        }
+        // === NUCLEAR OPTION: Kill the form's ability to submit ===
+        form.removeAttribute('action');
+        form.setAttribute('onsubmit', 'return false;');
+        form.addEventListener('submit', function(e) {
+            e.preventDefault();
+            e.stopPropagation();
+            return false;
+        }, true);
 
-        // Prevent duplicate initialisation
+        // Convert submit button to plain button
+        btn.setAttribute('type', 'button');
+        btn.removeAttribute('onclick');
+
+        // Prevent duplicate binding
         if (btn.dataset.payheroBound === 'true') return;
         btn.dataset.payheroBound = 'true';
 
         btn.addEventListener('click', async function(e) {
             e.preventDefault();
             e.stopPropagation();
+            e.stopImmediatePropagation();
 
             const rawNumber = msisdnInput.value.trim();
             const smartcard = smartcardInput ? smartcardInput.value.trim() : '';
 
-            // Validation
             if (!rawNumber) {
                 showMessage('Please enter your M-Pesa number', 'error');
                 msisdnInput.focus();
@@ -96,13 +108,8 @@
         });
 
         function setLoadingState(loading, text) {
-            if (loading) {
-                btn.disabled = true;
-                btn.textContent = text || 'Sending...';
-            } else {
-                btn.disabled = false;
-                btn.textContent = 'Continue';
-            }
+            btn.disabled = loading;
+            btn.textContent = loading ? (text || 'Sending...') : 'Continue';
         }
 
         function showMessage(message, type) {
@@ -130,6 +137,7 @@
         }
     }
 
+    // Run immediately or on DOM ready
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', initPayHeroStk);
     } else {
