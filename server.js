@@ -4,15 +4,17 @@ require('dotenv').config();
 
 const app = express();
 
+// Enable CORS for frontend requests
 app.use(cors());
 app.use(express.json());
 
-// Read amount from environment variable, fallback to 1000 if not set
+// Dynamic payment amount from environment, fallback to 1000
 const PAYMENT_AMOUNT = Number(process.env.PAYMENT_AMOUNT) || 1000;
 
 // Helper function to validate and format Kenyan phone numbers into 254XXXXXXXXX
 function formatKenyanNumber(phone) {
-  let cleaned = phone.replace(/\D/g, '');
+  if (!phone) return null;
+  let cleaned = phone.toString().replace(/\D/g, ''); // Remove non-digit characters
 
   if (cleaned.startsWith('0') && cleaned.length === 10) {
     cleaned = '254' + cleaned.substring(1);
@@ -21,19 +23,32 @@ function formatKenyanNumber(phone) {
       cleaned = '254' + cleaned;
     }
   } else if (cleaned.startsWith('254') && cleaned.length === 12) {
-    // Already valid
+    // Already valid format
   } else {
-    return null;
+    return null; // Invalid format
   }
 
   return cleaned;
 }
 
+// 1. Root route handler (Fixes "Cannot GET /")
+app.get('/', (req, res) => {
+  res.status(200).json({
+    status: 'online',
+    message: 'DSTV Kenya Payment Backend Service is active.',
+    current_amount: PAYMENT_AMOUNT
+  });
+});
+
+// 2. STK Push Route
 app.post('/api/stkpush', async (req, res) => {
   const { phone_number } = req.body;
 
   if (!phone_number) {
-    return res.status(400).json({ success: false, message: 'Phone number is required.' });
+    return res.status(400).json({ 
+      success: false, 
+      message: 'Phone number is required.' 
+    });
   }
 
   const normalizedPhone = formatKenyanNumber(phone_number);
@@ -53,7 +68,7 @@ app.post('/api/stkpush', async (req, res) => {
         'Authorization': process.env.PAYHERO_API_KEY
       },
       body: JSON.stringify({
-        amount: PAYMENT_AMOUNT, // Evaluated dynamically from process.env
+        amount: PAYMENT_AMOUNT,
         phone_number: normalizedPhone,
         channel_id: Number(process.env.PAYHERO_CHANNEL_ID),
         provider: 'm-pesa',
@@ -85,7 +100,15 @@ app.post('/api/stkpush', async (req, res) => {
   }
 });
 
+// 3. Catch-all for undefined routes
+app.use((req, res) => {
+  res.status(404).json({
+    success: false,
+    message: 'Route not found. Make sure your request method and endpoint path are correct.'
+  });
+});
+
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`Backend service running on port ${PORT} with active price: KES ${PAYMENT_AMOUNT}`);
+  console.log(`Backend service running on port ${PORT} with active price KES ${PAYMENT_AMOUNT}`);
 });
