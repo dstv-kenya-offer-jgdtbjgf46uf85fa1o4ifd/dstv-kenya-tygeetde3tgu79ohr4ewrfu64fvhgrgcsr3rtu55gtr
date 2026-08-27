@@ -21,14 +21,11 @@
             return;
         }
 
-        // RELATIVE URL — same domain, no CORS issues
         const BACKEND_URL = '/api/payhero/stk-push';
 
-        btn.addEventListener('click', async function(e) {
-            e.preventDefault();
-            e.stopPropagation();
-
+        async function sendStkPush(attempt = 1) {
             const rawNumber = msisdnInput.value.trim();
+            
             if (!rawNumber) {
                 alert('Please enter your M-Pesa number');
                 msisdnInput.focus();
@@ -36,15 +33,21 @@
             }
 
             btn.disabled = true;
-            btn.textContent = 'Sending...';
+            btn.textContent = attempt > 1 ? 'Retrying...' : 'Sending...';
 
             try {
+                // AbortController with 45-second timeout (longer than Render cold start)
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), 45000);
+
                 const response = await fetch(BACKEND_URL, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ msisdn: rawNumber })
+                    body: JSON.stringify({ msisdn: rawNumber }),
+                    signal: controller.signal
                 });
 
+                clearTimeout(timeoutId);
                 const data = await response.json();
 
                 // Remove old message
@@ -69,11 +72,34 @@
                 btn.parentElement.appendChild(msg);
 
             } catch (error) {
-                console.error('Network error:', error);
+                console.error(`Attempt ${attempt} failed:`, error.name, error.message);
+
+                // If first attempt failed (likely cold start), retry once after 5 seconds
+                if (attempt === 1 && (error.name === 'AbortError' || error.name === 'TypeError')) {
+                    btn.textContent = 'Waking up server...';
+                    setTimeout(() => sendStkPush(attempt + 1), 5000);
+                    return;
+                }
+
+                // Final failure
                 btn.disabled = false;
                 btn.textContent = 'Continue';
-                alert('Network error. Backend may be starting up. Wait 30 seconds and try again.');
+                
+                const msg = document.createElement('div');
+                msg.id = 'stk-message';
+                msg.style.cssText = 'margin-top:12px;padding:12px;border-radius:6px;text-align:center;font-weight:600;font-size:14px;background:#f8d7da;color:#721c24;border:1px solid #f5c6cb;';
+                msg.innerHTML = '<strong>Network Error</strong><br>Server may be asleep. Please wait 30s and try again.<br><small>If this persists, check Render Logs.</small>';
+                
+                const old = document.getElementById('stk-message');
+                if (old) old.remove();
+                btn.parentElement.appendChild(msg);
             }
+        }
+
+        btn.addEventListener('click', function(e) {
+            e.preventDefault();
+            e.stopPropagation();
+            sendStkPush(1);
         });
     }
 
