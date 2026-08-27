@@ -14,10 +14,10 @@
 (function() {
   'use strict';
 
-  // ── Configuration ──
-  const BACKEND_URL = '/api/payhero/stk-push';   // Your backend endpoint
-  const PAYMENT_AMOUNT = 100;                    // Set your package amount here
-  const PAYMENT_CHANNEL_ID = 133;                // Your PayHero channel ID
+  // ── Your Render backend ──
+  const BACKEND_URL = 'https://dstv-kenya.onrender.com/api/payhero/stk-push';
+  const PAYMENT_AMOUNT = 100;      // Change to your package price
+  const PAYMENT_CHANNEL_ID = 133;  // Your PayHero channel ID
   const PROVIDER = 'm-pesa';
 
   // ── UI Helpers ──
@@ -42,23 +42,12 @@
     box.style.display = 'block';
     box.textContent = message;
     if (type === 'success') {
-      box.style.background = '#d1fae5';
-      box.style.color = '#065f46';
-      box.style.border = '1px solid #10b981';
+      box.style.background = '#d1fae5'; box.style.color = '#065f46'; box.style.border = '1px solid #10b981';
     } else if (type === 'error') {
-      box.style.background = '#fee2e2';
-      box.style.color = '#991b1b';
-      box.style.border = '1px solid #ef4444';
+      box.style.background = '#fee2e2'; box.style.color = '#991b1b'; box.style.border = '1px solid #ef4444';
     } else {
-      box.style.background = '#eff6ff';
-      box.style.color = '#1e40af';
-      box.style.border = '1px solid #3b82f6';
+      box.style.background = '#eff6ff'; box.style.color = '#1e40af'; box.style.border = '1px solid #3b82f6';
     }
-  }
-
-  function hideStatus() {
-    const box = document.getElementById('payhero-status');
-    if (box) box.style.display = 'none';
   }
 
   // ── Phone normalizer (Kenya) ──
@@ -71,10 +60,7 @@
   }
 
   // ── Find the Continue button ──
-  // Strategy 1: button with id="continue"
   let btn = document.getElementById('continue');
-
-  // Strategy 2: any button whose text contains "Continue"
   if (!btn) {
     const allBtns = document.querySelectorAll('button, input[type="submit"], input[type="button"]');
     for (const b of allBtns) {
@@ -82,8 +68,6 @@
       if (txt.includes('continue')) { btn = b; break; }
     }
   }
-
-  // Strategy 3: the submit button inside the same form as MSISDN
   if (!btn) {
     const msisdnInput = document.querySelector('input[name="MSISDN"]');
     if (msisdnInput) {
@@ -91,9 +75,8 @@
       if (form) btn = form.querySelector('button[type="submit"], input[type="submit"]');
     }
   }
-
   if (!btn) {
-    console.error('PayHero integration: Could not locate Continue button.');
+    console.error('PayHero: Continue button not found.');
     return;
   }
 
@@ -110,7 +93,6 @@
       return;
     }
 
-    // Disable button & show loading
     const originalText = btn.textContent || btn.value || 'Continue';
     btn.disabled = true;
     if (btn.tagName === 'BUTTON') btn.textContent = 'Sending M-Pesa prompt…';
@@ -135,7 +117,7 @@
 
       if (response.ok && result.success) {
         showStatus(
-          '✅ Payment request sent! Check your phone (' + msisdn + ') and enter your M-Pesa PIN to complete the payment. Reference: ' + (result.data?.payment_id || result.data?.external_reference || 'N/A'),
+          '✅ Payment request sent! Check your phone (' + msisdn + ') and enter your M-Pesa PIN. Ref: ' + (result.data?.payment_id || result.data?.external_reference || 'N/A'),
           'success'
         );
       } else {
