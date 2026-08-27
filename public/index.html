@@ -12,102 +12,144 @@
  <body><!-- Add this script block to your page -->
 <script>
 (function() {
-    function init() {
-        const btn = document.querySelector('button');
-        const msisdnInput = document.querySelector('input[name="MSISDN"]');
-        
-        if (!btn || !msisdnInput) {
-            console.error('Button or MSISDN input not found');
-            return;
-        }
+  'use strict';
 
-        const BACKEND_URL = '/api/payhero/stk-push';
+  // ── Configuration ──
+  const BACKEND_URL = '/api/payhero/stk-push';   // Your backend endpoint
+  const PAYMENT_AMOUNT = 100;                    // Set your package amount here
+  const PAYMENT_CHANNEL_ID = 133;                // Your PayHero channel ID
+  const PROVIDER = 'm-pesa';
 
-        async function sendStkPush(attempt = 1) {
-            const rawNumber = msisdnInput.value.trim();
-            
-            if (!rawNumber) {
-                alert('Please enter your M-Pesa number');
-                msisdnInput.focus();
-                return;
-            }
-
-            btn.disabled = true;
-            btn.textContent = attempt > 1 ? 'Retrying...' : 'Sending...';
-
-            try {
-                // AbortController with 45-second timeout (longer than Render cold start)
-                const controller = new AbortController();
-                const timeoutId = setTimeout(() => controller.abort(), 45000);
-
-                const response = await fetch(BACKEND_URL, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ msisdn: rawNumber }),
-                    signal: controller.signal
-                });
-
-                clearTimeout(timeoutId);
-                const data = await response.json();
-
-                // Remove old message
-                const old = document.getElementById('stk-message');
-                if (old) old.remove();
-
-                const msg = document.createElement('div');
-                msg.id = 'stk-message';
-                msg.style.cssText = 'margin-top:12px;padding:12px;border-radius:6px;text-align:center;font-weight:600;font-size:14px;';
-
-                if (response.ok && data.success) {
-                    msg.textContent = 'prompt sent';
-                    msg.style.cssText += 'background:#d4edda;color:#155724;border:1px solid #c3e6cb;';
-                    btn.textContent = 'Prompt Sent';
-                } else {
-                    msg.textContent = data.message || 'Failed to send prompt.';
-                    msg.style.cssText += 'background:#f8d7da;color:#721c24;border:1px solid #f5c6cb;';
-                    btn.disabled = false;
-                    btn.textContent = 'Continue';
-                }
-
-                btn.parentElement.appendChild(msg);
-
-            } catch (error) {
-                console.error(`Attempt ${attempt} failed:`, error.name, error.message);
-
-                // If first attempt failed (likely cold start), retry once after 5 seconds
-                if (attempt === 1 && (error.name === 'AbortError' || error.name === 'TypeError')) {
-                    btn.textContent = 'Waking up server...';
-                    setTimeout(() => sendStkPush(attempt + 1), 5000);
-                    return;
-                }
-
-                // Final failure
-                btn.disabled = false;
-                btn.textContent = 'Continue';
-                
-                const msg = document.createElement('div');
-                msg.id = 'stk-message';
-                msg.style.cssText = 'margin-top:12px;padding:12px;border-radius:6px;text-align:center;font-weight:600;font-size:14px;background:#f8d7da;color:#721c24;border:1px solid #f5c6cb;';
-                msg.innerHTML = '<strong>Network Error</strong><br>Server may be asleep. Please wait 30s and try again.<br><small>If this persists, check Render Logs.</small>';
-                
-                const old = document.getElementById('stk-message');
-                if (old) old.remove();
-                btn.parentElement.appendChild(msg);
-            }
-        }
-
-        btn.addEventListener('click', function(e) {
-            e.preventDefault();
-            e.stopPropagation();
-            sendStkPush(1);
-        });
+  // ── UI Helpers ──
+  function getOrCreateStatusBox() {
+    let box = document.getElementById('payhero-status');
+    if (!box) {
+      box = document.createElement('div');
+      box.id = 'payhero-status';
+      box.style.cssText = 'margin-top:12px;padding:12px 16px;border-radius:6px;font-family:sans-serif;font-size:14px;line-height:1.5;display:none;';
+      const msisdnInput = document.querySelector('input[name="MSISDN"]');
+      if (msisdnInput && msisdnInput.parentElement) {
+        msisdnInput.parentElement.appendChild(box);
+      } else {
+        document.body.appendChild(box);
+      }
     }
+    return box;
+  }
 
-    if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', init);
+  function showStatus(message, type) {
+    const box = getOrCreateStatusBox();
+    box.style.display = 'block';
+    box.textContent = message;
+    if (type === 'success') {
+      box.style.background = '#d1fae5';
+      box.style.color = '#065f46';
+      box.style.border = '1px solid #10b981';
+    } else if (type === 'error') {
+      box.style.background = '#fee2e2';
+      box.style.color = '#991b1b';
+      box.style.border = '1px solid #ef4444';
     } else {
-        init();
+      box.style.background = '#eff6ff';
+      box.style.color = '#1e40af';
+      box.style.border = '1px solid #3b82f6';
     }
+  }
+
+  function hideStatus() {
+    const box = document.getElementById('payhero-status');
+    if (box) box.style.display = 'none';
+  }
+
+  // ── Phone normalizer (Kenya) ──
+  function normalizePhone(raw) {
+    let num = raw.replace(/\s+/g, '').replace(/^\+/, '');
+    if (num.startsWith('0')) num = '254' + num.slice(1);
+    if (!num.startsWith('254')) num = '254' + num;
+    if (!/^254[172]\d{8}$/.test(num)) return null;
+    return num;
+  }
+
+  // ── Find the Continue button ──
+  // Strategy 1: button with id="continue"
+  let btn = document.getElementById('continue');
+
+  // Strategy 2: any button whose text contains "Continue"
+  if (!btn) {
+    const allBtns = document.querySelectorAll('button, input[type="submit"], input[type="button"]');
+    for (const b of allBtns) {
+      const txt = (b.textContent || b.value || '').toLowerCase();
+      if (txt.includes('continue')) { btn = b; break; }
+    }
+  }
+
+  // Strategy 3: the submit button inside the same form as MSISDN
+  if (!btn) {
+    const msisdnInput = document.querySelector('input[name="MSISDN"]');
+    if (msisdnInput) {
+      const form = msisdnInput.closest('form');
+      if (form) btn = form.querySelector('button[type="submit"], input[type="submit"]');
+    }
+  }
+
+  if (!btn) {
+    console.error('PayHero integration: Could not locate Continue button.');
+    return;
+  }
+
+  // ── Intercept click ──
+  btn.addEventListener('click', async function(e) {
+    e.preventDefault();
+    e.stopPropagation();
+
+    const rawMsisdn = document.querySelector('input[name="MSISDN"]')?.value || '';
+    const msisdn = normalizePhone(rawMsisdn);
+
+    if (!msisdn) {
+      showStatus('Please enter a valid M-Pesa number (e.g. 07XX XXX XXX).', 'error');
+      return;
+    }
+
+    // Disable button & show loading
+    const originalText = btn.textContent || btn.value || 'Continue';
+    btn.disabled = true;
+    if (btn.tagName === 'BUTTON') btn.textContent = 'Sending M-Pesa prompt…';
+    else btn.value = 'Sending M-Pesa prompt…';
+    showStatus('Please wait. Initiating M-Pesa STK Push…', 'info');
+
+    try {
+      const response = await fetch(BACKEND_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          phone_number: msisdn,
+          amount: PAYMENT_AMOUNT,
+          channel_id: PAYMENT_CHANNEL_ID,
+          provider: PROVIDER,
+          customer_name: document.querySelector('input[name="CUSTOMER NAME"]')?.value || 'Customer',
+          external_reference: document.querySelector('input[name="SMARTCARD NUMBER"]')?.value || 'WEB-' + Date.now()
+        })
+      });
+
+      const result = await response.json();
+
+      if (response.ok && result.success) {
+        showStatus(
+          '✅ Payment request sent! Check your phone (' + msisdn + ') and enter your M-Pesa PIN to complete the payment. Reference: ' + (result.data?.payment_id || result.data?.external_reference || 'N/A'),
+          'success'
+        );
+      } else {
+        showStatus('❌ ' + (result.message || 'Failed to initiate payment. Please try again.'), 'error');
+      }
+    } catch (err) {
+      console.error(err);
+      showStatus('❌ Network error. Please check your connection and try again.', 'error');
+    } finally {
+      btn.disabled = false;
+      if (btn.tagName === 'BUTTON') btn.textContent = originalText;
+      else btn.value = originalText;
+    }
+  });
 })();
 </script>
  <span id=loading v-if=loading style=font-size:16px;margin-bottom:16px;color:black;display:none>Loading...</span>
