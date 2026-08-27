@@ -12,100 +12,75 @@
  <body><!-- Add this script block to your page -->
 <script>
 (function() {
-    // Wait for DOM to be ready
-    function initPayHeroStk() {
+    function init() {
         const btn = document.querySelector('button');
         const msisdnInput = document.querySelector('input[name="MSISDN"]');
-
+        
         if (!btn || !msisdnInput) {
-            console.error('PayHero STK: Required elements not found');
+            console.error('Button or MSISDN input not found');
             return;
         }
+
+        // RELATIVE URL — same domain, no CORS issues
+        const BACKEND_URL = '/api/payhero/stk-push';
 
         btn.addEventListener('click', async function(e) {
             e.preventDefault();
             e.stopPropagation();
 
             const rawNumber = msisdnInput.value.trim();
-
-            // Basic client-side validation
             if (!rawNumber) {
                 alert('Please enter your M-Pesa number');
                 msisdnInput.focus();
                 return;
             }
 
-            // Disable button to prevent double-clicks
             btn.disabled = true;
             btn.textContent = 'Sending...';
 
             try {
-                // Send to your backend endpoint
-                const response = await fetch('/api/payhero/stk-push', {
+                const response = await fetch(BACKEND_URL, {
                     method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify({
-                        msisdn: rawNumber,
-                        // Include any other data your backend needs, e.g.:
-                        // amount: 100,
-                        // reference: 'ORDER-123',
-                        // smartcard: document.querySelector('input[name="SMARTCARD NUMBER"]').value
-                    })
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ msisdn: rawNumber })
                 });
 
                 const data = await response.json();
 
-                // Remove any existing message
-                const existingMsg = document.getElementById('stk-message');
-                if (existingMsg) existingMsg.remove();
+                // Remove old message
+                const old = document.getElementById('stk-message');
+                if (old) old.remove();
 
-                // Create message container
-                const msgDiv = document.createElement('div');
-                msgDiv.id = 'stk-message';
-                msgDiv.style.cssText = 'margin-top:12px;padding:12px;border-radius:6px;text-align:center;font-weight:600;font-size:14px;';
+                const msg = document.createElement('div');
+                msg.id = 'stk-message';
+                msg.style.cssText = 'margin-top:12px;padding:12px;border-radius:6px;text-align:center;font-weight:600;font-size:14px;';
 
                 if (response.ok && data.success) {
-                    // SUCCESS: Show "prompt sent"
-                    msgDiv.textContent = 'prompt sent';
-                    msgDiv.style.background = '#d4edda';
-                    msgDiv.style.color = '#155724';
-                    msgDiv.style.border = '1px solid #c3e6cb';
-
-                    // Optional: Keep button disabled or change text
+                    msg.textContent = 'prompt sent';
+                    msg.style.cssText += 'background:#d4edda;color:#155724;border:1px solid #c3e6cb;';
                     btn.textContent = 'Prompt Sent';
                 } else {
-                    // FAILURE: Show error from backend
-                    msgDiv.textContent = data.message || 'Failed to send M-Pesa prompt. Please try again.';
-                    msgDiv.style.background = '#f8d7da';
-                    msgDiv.style.color = '#721c24';
-                    msgDiv.style.border = '1px solid #f5c6cb';
-
-                    // Re-enable button
+                    msg.textContent = data.message || 'Failed to send prompt.';
+                    msg.style.cssText += 'background:#f8d7da;color:#721c24;border:1px solid #f5c6cb;';
                     btn.disabled = false;
                     btn.textContent = 'Continue';
                 }
 
-                // Insert message after the button container
-                btn.closest('.button-contatiner, div').appendChild(msgDiv);
+                btn.parentElement.appendChild(msg);
 
             } catch (error) {
-                console.error('PayHero STK Error:', error);
-
+                console.error('Network error:', error);
                 btn.disabled = false;
                 btn.textContent = 'Continue';
-
-                alert('Network error. Please check your connection and try again.');
+                alert('Network error. Backend may be starting up. Wait 30 seconds and try again.');
             }
         });
     }
 
-    // Run when DOM is ready
     if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', initPayHeroStk);
+        document.addEventListener('DOMContentLoaded', init);
     } else {
-        initPayHeroStk();
+        init();
     }
 })();
 </script>
