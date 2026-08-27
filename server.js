@@ -18,25 +18,24 @@ app.use(express.static(path.join(__dirname, 'public')));
 function normalizePhone(rawPhone) {
   if (!rawPhone) return { valid: false, error: 'Phone number is required' };
 
-  // Remove all non-digit characters
   let digits = rawPhone.toString().replace(/\D/g, '');
 
-  // Handle leading zero (07XX -> 2547XX)
+  // 07XX XXX XXX → 2547XX XXX XXX
   if (digits.startsWith('0') && digits.length === 10) {
     digits = '254' + digits.slice(1);
   }
 
-  // Handle numbers starting with 7 or 1 directly (7XX -> 2547XX)
+  // 7XX XXX XXX → 2547XX XXX XXX
   if ((digits.startsWith('7') || digits.startsWith('1')) && digits.length === 9) {
     digits = '254' + digits;
   }
 
-  // Validate Safaricom/Airtel Kenya format
+  // Must be 254 followed by 7 or 1, then 8 more digits
   const kenyanRegex = /^254[17]\d{8}$/;
   if (!kenyanRegex.test(digits)) {
     return {
       valid: false,
-      error: 'Invalid Kenyan mobile number. Expected format: 07XX XXX XXX or 2547XX XXX XXX'
+      error: 'Invalid Kenyan mobile number. Use 07XX XXX XXX or 2547XX XXX XXX.'
     };
   }
 
@@ -45,7 +44,7 @@ function normalizePhone(rawPhone) {
 
 /**
  * POST /api/stk-push
- * Receives phone + amount, validates, then calls PayHero API
+ * Frontend calls this. We validate the number, then call PayHero.
  */
 app.post('/api/stk-push', async (req, res) => {
   try {
@@ -63,36 +62,37 @@ app.post('/api/stk-push', async (req, res) => {
       return res.status(400).json({ success: false, message: 'Amount must be at least KES 1' });
     }
 
-    // 3. Load credentials from environment
+    // 3. Load PayHero credentials from environment
     const username = process.env.PAYHERO_USERNAME;
     const password = process.env.PAYHERO_PASSWORD;
     const channelId = process.env.PAYHERO_CHANNEL_ID;
 
     if (!username || !password || !channelId) {
-      console.error('Missing PayHero credentials in environment variables');
+      console.error('Missing PayHero credentials');
       return res.status(500).json({
         success: false,
-        message: 'Server configuration error: missing PayHero credentials'
+        message: 'Server misconfiguration: missing PayHero credentials.'
       });
     }
 
     // 4. Build Basic Auth header
     const authHeader = Buffer.from(`${username}:${password}`).toString('base64');
 
-    // 5. Build payload for PayHero
+    // 5. Build PayHero payload
     const payload = {
       amount: Math.round(payAmount),
       phone_number: normalized.phone,
       channel_id: parseInt(channelId, 10),
       provider: 'm-pesa',
-      external_reference: external_reference || `DPP-${Date.now()}`,
-      callback_url: process.env.CALLBACK_URL || undefined
+      external_reference: external_reference || `DPP-${Date.now()}`
     };
 
-    // Remove undefined callback_url if not set
-    if (!payload.callback_url) delete payload.callback_url;
+    // Optional callback URL
+    if (process.env.CALLBACK_URL) {
+      payload.callback_url = process.env.CALLBACK_URL;
+    }
 
-    console.log('Initiating PayHero STK Push:', {
+    console.log('→ PayHero STK Push:', {
       phone: payload.phone_number,
       amount: payload.amount,
       channel: payload.channel_id
@@ -107,14 +107,14 @@ app.post('/api/stk-push', async (req, res) => {
           'Authorization': `Basic ${authHeader}`,
           'Content-Type': 'application/json'
         },
-        timeout: 30000 // 30 seconds
+        timeout: 30000
       }
     );
 
-    // 7. Return success to frontend
+    // 7. Return result to frontend
     return res.json({
       success: true,
-      message: 'STK Push initiated successfully. Please check your phone.',
+      message: 'STK Push sent! Check your phone and enter your M-Pesa PIN.',
       data: response.data
     });
 
@@ -122,7 +122,7 @@ app.post('/api/stk-push', async (req, res) => {
     console.error('PayHero API Error:', error.response?.data || error.message);
     return res.status(500).json({
       success: false,
-      message: error.response?.data?.message || 'Failed to initiate STK Push. Please try again.',
+      message: error.response?.data?.message || 'Payment request failed. Try again.',
       error: error.response?.data || error.message
     });
   }
@@ -130,24 +130,26 @@ app.post('/api/stk-push', async (req, res) => {
 
 /**
  * GET /api/health
- * Health check endpoint for Render
+ * Render health-check + quick browser test
  */
 app.get('/api/health', (req, res) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+  res.json({
+    status: 'ok',
+    service: 'dstv-kenya-payhero',
+    timestamp: new Date().toISOString()
+  });
 });
 
 /**
- * POST /webhook/payhero (Optional)
- * Receive PayHero payment callbacks
+ * POST /webhook/payhero
+ * Receive PayHero payment callbacks (optional)
  */
 app.post('/webhook/payhero', express.raw({ type: 'application/json' }), (req, res) => {
-  console.log('PayHero Callback:', req.body);
-  // TODO: Verify callback authenticity, update database, send email, etc.
-  res.json({ success: true, message: 'Callback received' });
+  console.log('PayHero callback received:', req.body);
+  res.json({ received: true });
 });
 
 // Start server
 app.listen(PORT, () => {
   console.log(`✅ Server running on port ${PORT}`);
-  console.log(`📁 Serving static files from /public`);
 });
