@@ -7,9 +7,12 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
+// Read amount from environment variable, fallback to 1000 if not set
+const PAYMENT_AMOUNT = Number(process.env.PAYMENT_AMOUNT) || 1000;
+
 // Helper function to validate and format Kenyan phone numbers into 254XXXXXXXXX
 function formatKenyanNumber(phone) {
-  let cleaned = phone.replace(/\D/g, ''); // Remove non-digit characters
+  let cleaned = phone.replace(/\D/g, '');
 
   if (cleaned.startsWith('0') && cleaned.length === 10) {
     cleaned = '254' + cleaned.substring(1);
@@ -18,9 +21,9 @@ function formatKenyanNumber(phone) {
       cleaned = '254' + cleaned;
     }
   } else if (cleaned.startsWith('254') && cleaned.length === 12) {
-    // Already in correct format
+    // Already valid
   } else {
-    return null; // Invalid format
+    return null;
   }
 
   return cleaned;
@@ -43,17 +46,16 @@ app.post('/api/stkpush', async (req, res) => {
   }
 
   try {
-    // PayHero STK Push API integration
     const payHeroResponse = await fetch('https://backend.payhero.co.ke/api/v2/payments', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': process.env.PAYHERO_API_KEY // Kept hidden on server
+        'Authorization': process.env.PAYHERO_API_KEY
       },
       body: JSON.stringify({
-        amount: 1, // Set your target amount or receive dynamically
+        amount: PAYMENT_AMOUNT, // Evaluated dynamically from process.env
         phone_number: normalizedPhone,
-        channel_id: process.env.PAYHERO_CHANNEL_ID,
+        channel_id: Number(process.env.PAYHERO_CHANNEL_ID),
         provider: 'm-pesa',
         external_reference: `DSTV_${Date.now()}`,
         callback_url: process.env.PAYHERO_CALLBACK_URL || 'https://your-render-service.onrender.com/api/callback'
@@ -85,5 +87,5 @@ app.post('/api/stkpush', async (req, res) => {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`Backend service running on port ${PORT}`);
+  console.log(`Backend service running on port ${PORT} with active price: KES ${PAYMENT_AMOUNT}`);
 });
