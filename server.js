@@ -12,8 +12,13 @@ app.use(helmet());
 app.use(cors());
 app.use(express.json());
 
-// Serve static files (page2.html and assets)
+// Serve static files (page2.html, CSS, images) from /public
 app.use(express.static(path.join(__dirname, 'public')));
+
+// ROOT ROUTE FIX: Serve page2.html when user visits /
+app.get('/', (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'page2.html'));
+});
 
 /**
  * Normalize Kenyan phone numbers to 254XXXXXXXXX format
@@ -76,7 +81,7 @@ app.post('/api/stk-push', async (req, res) => {
         ).toString('base64');
 
         const payload = {
-            amount: 1, // Set your actual amount here or derive from smartcard/package
+            amount: 1, // TODO: Set your actual DStv package amount
             phone_number: normalizedPhone,
             channel_id: parseInt(process.env.PAYHERO_CHANNEL_ID, 10),
             provider: 'm-pesa',
@@ -124,7 +129,7 @@ app.post('/api/stk-push', async (req, res) => {
 app.post('/api/callback', (req, res) => {
     console.log('PayHero Callback:', JSON.stringify(req.body, null, 2));
     
-    // Always acknowledge receipt
+    // Always acknowledge receipt immediately
     res.json({ success: true, message: 'Callback received' });
     
     // TODO: Update your database, activate subscription, send email, etc.
@@ -141,4 +146,5 @@ app.get('/api/health', (req, res) => {
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);
+    console.log(`Visit: http://localhost:${PORT}/`);
 });
