@@ -1,11 +1,28 @@
 {
-  "name": "payhero-stk-integration",
+  "name": "dstv-kenya-bluepay",
   "version": "1.0.0",
-  "scripts": { "start": "node server.js" },
+  "description": "Express application for processing M-Pesa payments via BluePay STK Push",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "nodemon server.js"
+  },
+  "keywords": [
+    "express",
+    "m-pesa",
+    "stk-push",
+    "bluepay",
+    "kenya"
+  ],
+  "author": "",
+  "license": "ISC",
   "dependencies": {
-    "axios": "^1.7.2",
+    "axios": "^1.7.0",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
     "express": "^4.19.2"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.0"
   }
 }
