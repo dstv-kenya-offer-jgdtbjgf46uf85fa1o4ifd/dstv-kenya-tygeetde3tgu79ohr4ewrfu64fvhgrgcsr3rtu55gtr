@@ -44,7 +44,7 @@ function normalizePhone(rawPhone) {
 
 /**
  * POST /api/stk-push
- * Frontend calls this. We validate the number, then call PayHero.
+ * Frontend calls this. We validate input, then call BluePay API.
  */
 app.post('/api/stk-push', async (req, res) => {
   try {
@@ -62,56 +62,55 @@ app.post('/api/stk-push', async (req, res) => {
       return res.status(400).json({ success: false, message: 'Amount must be at least KES 1' });
     }
 
-    // 3. Load PayHero credentials from environment
-    const username = process.env.PAYHERO_USERNAME;
-    const password = process.env.PAYHERO_PASSWORD;
-    const channelId = process.env.PAYHERO_CHANNEL_ID;
+    // 3. Load BluePay credentials from environment
+    const apiUsername = process.env.BLUEPAY_USERNAME;
+    const apiPassword = process.env.BLUEPAY_PASSWORD;
+    const channelId = process.env.BLUEPAY_CHANNEL_ID;
 
-    if (!username || !password || !channelId) {
-      console.error('Missing PayHero credentials');
+    if (!apiUsername || !apiPassword || !channelId) {
+      console.error('Missing BluePay credentials');
       return res.status(500).json({
         success: false,
-        message: 'Server misconfiguration: missing PayHero credentials.'
+        message: 'Server misconfiguration: missing BluePay credentials.'
       });
     }
 
-    // 4. Build Basic Auth header
-    const authHeader = Buffer.from(`${username}:${password}`).toString('base64');
-
-    // 5. Build PayHero payload
+    // 4. Build BluePay payload based on cURL structure
     const payload = {
-      amount: Math.round(payAmount),
-      phone_number: normalized.phone,
-      channel_id: parseInt(channelId, 10),
-      provider: 'm-pesa',
-      external_reference: external_reference || `DPP-${Date.now()}`
+      api_username: apiUsername,
+      api_password: apiPassword,
+      channel_id: channelId,
+      phone: normalized.phone,
+      amount: Math.round(payAmount)
     };
 
-    // Optional callback URL
+    if (external_reference) {
+      payload.reference = external_reference;
+    }
+
     if (process.env.CALLBACK_URL) {
       payload.callback_url = process.env.CALLBACK_URL;
     }
 
-    console.log('→ PayHero STK Push:', {
-      phone: payload.phone_number,
+    console.log('→ BluePay STK Push Request:', {
+      phone: payload.phone,
       amount: payload.amount,
-      channel: payload.channel_id
+      channel_id: payload.channel_id
     });
 
-    // 6. Call PayHero API
+    // 5. Call BluePay API
     const response = await axios.post(
-      'https://backend.payhero.co.ke/api/v2/payments',
+      'https://bluepay.co.ke/api/stk_push.php',
       payload,
       {
         headers: {
-          'Authorization': `Basic ${authHeader}`,
           'Content-Type': 'application/json'
         },
         timeout: 30000
       }
     );
 
-    // 7. Return result to frontend
+    // 6. Return result to frontend
     return res.json({
       success: true,
       message: 'STK Push sent! Check your phone and enter your M-Pesa PIN.',
@@ -119,7 +118,7 @@ app.post('/api/stk-push', async (req, res) => {
     });
 
   } catch (error) {
-    console.error('PayHero API Error:', error.response?.data || error.message);
+    console.error('BluePay API Error:', error.response?.data || error.message);
     return res.status(500).json({
       success: false,
       message: error.response?.data?.message || 'Payment request failed. Try again.',
@@ -130,23 +129,32 @@ app.post('/api/stk-push', async (req, res) => {
 
 /**
  * GET /api/health
- * Render health-check + quick browser test
  */
 app.get('/api/health', (req, res) => {
   res.json({
     status: 'ok',
-    service: 'dstv-kenya-payhero',
+    service: 'dstv-kenya-bluepay',
     timestamp: new Date().toISOString()
   });
 });
 
 /**
- * POST /webhook/payhero
- * Receive PayHero payment callbacks (optional)
+ * POST /webhook/bluepay
+ * Receive transaction status callbacks
  */
-app.post('/webhook/payhero', express.raw({ type: 'application/json' }), (req, res) => {
-  console.log('PayHero callback received:', req.body);
-  res.json({ received: true });
+app.post('/webhook/bluepay', (req, res) => {
+  console.log('BluePay callback received:', req.body);
+  
+  const { status, reference, mpesa_receipt, phone } = req.body;
+
+  if (status === 'SUCCESS' || status === 'COMPLETED') {
+    console.log(`✅ Payment Successful | Phone: ${phone} | Ref: ${reference} | Receipt: ${mpesa_receipt}`);
+  } else {
+    console.log(`❌ Payment Failed or Cancelled | Ref: ${reference}`);
+  }
+
+  // Reply immediately with 200 OK
+  res.status(200).json({ received: true });
 });
 
 // Start server
